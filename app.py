@@ -131,7 +131,7 @@ def main_app():
                 st.success("Thank you for your contribution! The transcription will be verified.")
         else:
             st.info("No audio clips available for labeling at the moment. Check back later!")
-    elifif app_mode == "Contribute New Audio":
+    elif app_mode == "Contribute New Audio":
             st.header("Contribute New Audio and Text")
         
         uploaded_audio = st.file_uploader("Upload Audio File", type=['wav', 'mp3'])
