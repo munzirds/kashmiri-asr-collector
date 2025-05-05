@@ -165,7 +165,7 @@ def main_app():
     
     if st.sidebar.button("Logout"):
         st.session_state.logged_in = False
-        st.experimental_rerun()
+        st.rerun()
 
 # Main app flow
 if 'logged_in' not in st.session_state:
