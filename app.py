@@ -3,6 +3,8 @@ import sqlite3
 import hashlib
 import os
 from pathlib import Path
+import base64
+import streamlit.components.v1 as components
 
 # Database setup
 def init_db():
@@ -70,6 +72,63 @@ def save_uploaded_audio(uploaded_file, contributor_id):
     
     return str(file_path)
 
+def save_recorded_audio(audio_data, contributor_id):
+    # Decode base64 audio data
+    audio_bytes = base64.b64decode(audio_data.split(',')[1])
+    filename = f"{contributor_id}_recorded_{len(os.listdir(AUDIO_UPLOAD_DIR))}.wav"
+    file_path = AUDIO_UPLOAD_DIR / filename
+    
+    with open(file_path, "wb") as f:
+        f.write(audio_bytes)
+    
+    return str(file_path)
+
+# JavaScript for audio recording
+RECORDING_HTML = """
+<script>
+    let mediaRecorder;
+    let audioChunks = [];
+    
+    function startRecording() {
+        navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(stream => {
+                mediaRecorder = new MediaRecorder(stream);
+                mediaRecorder.start();
+                
+                audioChunks = [];
+                mediaRecorder.addEventListener("dataavailable", event => {
+                    audioChunks.push(event.data);
+                });
+                
+                document.getElementById("status").innerText = "Recording...";
+                document.getElementById("start-btn").disabled = true;
+                document.getElementById("stop-btn").disabled = false;
+            });
+    }
+    
+    function stopRecording() {
+        mediaRecorder.stop();
+        mediaRecorder.addEventListener("stop", () => {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+            const reader = new FileReader();
+            reader.readAsDataURL(audioBlob);
+            reader.onloadend = () => {
+                const audioBase64 = reader.result;
+                window.parent.postMessage({ type: 'AUDIO_DATA', data: audioBase64 }, '*');
+            };
+            document.getElementById("status").innerText = "Recording stopped";
+            document.getElementById("start-btn").disabled = false;
+            document.getElementById("stop-btn").disabled = true;
+        });
+    }
+</script>
+<div>
+    <button id="start-btn" onclick="startRecording()">Start Recording</button>
+    <button id="stop-btn" onclick="stopRecording()" disabled>Stop Recording</button>
+    <p id="status">Press "Start Recording" to begin.</p>
+</div>
+"""
+
 # App components
 def login_page():
     st.title("Kashmiri ASR Data Collection - Login")
@@ -135,21 +194,38 @@ def main_app():
     elif app_mode == "Contribute New Audio":
         st.header("Contribute New Audio and Text")
         
-        uploaded_audio = st.file_uploader("Upload Audio File", type=['wav', 'mp3'])
-        manual_recording = st.checkbox("Or record audio directly")
+        upload_option = st.radio("Choose input method", ["Upload Audio File", "Record Audio"])
         
-        if manual_recording:
-            recorded_audio = st.audio("record", format="audio/wav")
+        audio_path = None
+        if upload_option == "Upload Audio File":
+            uploaded_audio = st.file_uploader("Upload Audio File", type=['wav', 'mp3'])
+            if uploaded_audio:
+                audio_path = save_uploaded_audio(uploaded_audio, user_id)
+                st.audio(audio_path)
         
-        transcription = st.text_area("Enter corresponding text in Kashmiri", key="new_transcription")
+        elif upload_option == "Record Audio":
+            st.write("Record your audio below:")
+            components.html(RECORDING_HTML, height=150)
+            
+            # Handle recorded audio
+            if 'audio_data' not in st.session_state:
+                st.session_state.audio_data = None
+                
+            # Streamlit doesn't directly handle JS messages, so we use a workaround
+            recorded_audio = st.text_input("Hidden input for audio data", key="audio_data_input", value="", style={"display": "none"})
+            
+            if recorded_audio:
+                try:
+                    audio_path = save_recorded_audio(recorded_audio, user_id)
+                    st.session_state.audio_data = audio_path
+                    st.audio(audio_path)
+                except Exception as e:
+                    st.error(f"Error saving recorded audio: {e}")
+        
+        transcription = st.text_area("Enter corresponding text in Kashmiri (ASR Label)", key="new_transcription")
         
         if st.button("Submit Contribution"):
-            if (uploaded_audio or manual_recording) and transcription:
-                # Save audio file
-                if uploaded_audio:
-                    audio_path = save_uploaded_audio(uploaded_audio, user_id)
-                # For recording, need additional handling (not fully implemented here)
-                
+            if audio_path and transcription:
                 # Save to database
                 conn = sqlite3.connect('asr_data.db')
                 c = conn.cursor()
@@ -160,6 +236,8 @@ def main_app():
                 conn.commit()
                 conn.close()
                 st.success("Thank you for your contribution!")
+                # Clear session state
+                st.session_state.audio_data = None
             else:
                 st.error("Please provide both audio and text")
     
